@@ -1,7 +1,13 @@
 
 package cn.jystudio.bluetooth.escpos;
 
+
+import android.graphics.Color;
+import java.io.ByteArrayOutputStream;
+import android.graphics.Canvas;
 import android.graphics.Bitmap;
+import android.graphics.Paint;
+import android.graphics.Typeface;
 import android.graphics.BitmapFactory;
 import android.util.Base64;
 import android.util.Log;
@@ -130,36 +136,82 @@ public class RNBluetoothEscposPrinterModule extends ReactContextBaseJavaModule
 
 
     @ReactMethod
-    public void printText(String text, @Nullable  ReadableMap options, final Promise promise) {
-        try {
-            String encoding = "GBK";
-            int codepage = 0;
-            int widthTimes = 0;
-            int heigthTimes=0;
-            int fonttype=0;
-            if(options!=null) {
-                encoding = options.hasKey("encoding") ? options.getString("encoding") : "GBK";
-                codepage = options.hasKey("codepage") ? options.getInt("codepage") : 0;
-                widthTimes = options.hasKey("widthtimes") ? options.getInt("widthtimes") : 0;
-                heigthTimes = options.hasKey("heigthtimes") ? options.getInt("heigthtimes") : 0;
-                fonttype = options.hasKey("fonttype") ? options.getInt("fonttype") : 0;
-            }
-            String toPrint = text;
-//            if ("UTF-8".equalsIgnoreCase(encoding)) {
-//                byte[] b = text.getBytes("UTF-8");
-//                toPrint = new String(b, Charset.forName(encoding));
-//            }
+public void printText(String text, @Nullable ReadableMap options, final Promise promise) {
+    try {
+        String encoding = "GBK";
+        int codepage = 0;
+        int widthTimes = 0;
+        int heigthTimes = 0;
+        int fonttype = 0;
+        if (options != null) {
+            encoding = options.hasKey("encoding") ? options.getString("encoding") : "GBK";
+            codepage = options.hasKey("codepage") ? options.getInt("codepage") : 0;
+            widthTimes = options.hasKey("widthtimes") ? options.getInt("widthtimes") : 0;
+            heigthTimes = options.hasKey("heigthtimes") ? options.getInt("heigthtimes") : 0;
+            fonttype = options.hasKey("fonttype") ? options.getInt("fonttype") : 0;
+        }
 
-            byte[] bytes = PrinterCommand.POS_Print_Text(toPrint, encoding, codepage, widthTimes, heigthTimes, fonttype);
+        // Check if the text is Arabic
+        boolean isArabic = isArabicText(text);
+
+        if (isArabic) {
+            // Convert the Arabic text to a base64 image
+            byte[] imageBytes = arabicTextToImage(text);
+            String base64Image = Base64.encodeToString(imageBytes, Base64.DEFAULT);
+
+            // Print the image
+            printPic(base64Image, options);
+            promise.resolve(null);
+        } else {
+            // Print the text as usual
+            byte[] bytes = PrinterCommand.POS_Print_Text(text, encoding, codepage, widthTimes, heigthTimes, fonttype);
             if (sendDataByte(bytes)) {
                 promise.resolve(null);
             } else {
                 promise.reject("COMMAND_NOT_SEND");
             }
-        }catch (Exception e){
-            promise.reject(e.getMessage(),e);
+        }
+    } catch (Exception e) {
+        promise.reject(e.getMessage(), e);
+    }
+}
+
+private boolean isArabicText(String text) {
+    for (char c : text.toCharArray()) {
+        if (Character.UnicodeBlock.of(c) == Character.UnicodeBlock.ARABIC) {
+            return true;
         }
     }
+    return false;
+}
+
+private byte[] arabicTextToImage(String text) {
+    Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    paint.setColor(Color.BLACK); // Text color
+    paint.setTextSize(23); // Text size
+    paint.setTypeface(Typeface.createFromAsset(reactContext.getAssets(), "arial.ttf")); // Arabic-supporting font
+
+    // Measure the text to determine the height required for the bitmap
+    Paint.FontMetrics fontMetrics = paint.getFontMetrics();
+    float textHeight = fontMetrics.descent - fontMetrics.ascent; // Calculate actual text height using ascent and descent
+
+    // Create a bitmap with a width of 100% of the device width and minimal necessary height
+    Bitmap bitmap = Bitmap.createBitmap(deviceWidth, (int) Math.ceil(textHeight), Bitmap.Config.ARGB_8888);
+    Canvas canvas = new Canvas(bitmap);
+    canvas.drawColor(Color.WHITE); // Set background color to white
+
+    // Calculate y to vertically center the text in the bitmap
+    float y = bitmap.getHeight() - fontMetrics.descent; // Align the bottom of the text with the bottom of the bitmap for better baseline consistency
+
+    // Draw the text on the canvas at x = 0 for left alignment
+    canvas.drawText(text, 0, y, paint);
+
+    // Convert the bitmap to a byte array for printing or storage
+    ByteArrayOutputStream bos = new ByteArrayOutputStream();
+    bitmap.compress(Bitmap.CompressFormat.PNG, 100, bos); // Compress as PNG at 100% quality
+    return bos.toByteArray();
+}
+
 
     @ReactMethod
     public void printColumn(ReadableArray columnWidths,ReadableArray columnAligns,ReadableArray columnTexts,
@@ -295,7 +347,7 @@ public class RNBluetoothEscposPrinterModule extends ReactContextBaseJavaModule
 
         /** loops the rows and print **/
         for(int i=0;i<rowsToPrint.length;i++){
-            rowsToPrint[i].append("\n\r");//wrap line..
+           rowsToPrint[i].append("\r\n");//wrap line..
             try {
  
                 if (!sendDataByte(PrinterCommand.POS_Print_Text(rowsToPrint[i].toString(), encoding, codepage, widthTimes, heigthTimes, fonttype))) {
